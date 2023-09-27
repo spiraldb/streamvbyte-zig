@@ -51,7 +51,7 @@ much variance there is in the "benchmarks".
 
 ```bash "M2 Macbook Air"
 $ zig build test -Doptimize=ReleaseFast
-run test: error: Zig StreamVByte
+Zig StreamVByte
 	Encode 10000000 ints between 0 and 10000 in mean 3467410ns
 	=> 2883 million ints per second
 
