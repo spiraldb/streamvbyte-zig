@@ -112,36 +112,24 @@ pub fn encode(elems: []const u32, out: []u8) usize {
 }
 
 inline fn encode_quad(elems: *const [4]u32, control: []u8, data: []u8) usize {
-    const elemsVec = @as(ValueVec, elems.*);
-
-    // Immediately casting to an i32 "encourages" LLVM to use a CLZ instruction
-    const leadingZeros = @as(@Vector(4, i32), @clz(elemsVec));
+    const leadingZeros = @clz(@as(ValueVec, elems.*));
 
     // Shift by 3 to divide by 8 and get a leading byte count
     const leadingZerosBytes = leadingZeros >> @splat(3);
-    // Saturated subtract from 3 (saturated => meaning overflow sticks to zero).
-    // TODO(ngates): Zig does have a builtin, but it may be faster by hand?
-    const codeBytesOverflow = @as(@Vector(4, i32), @splat(3)) - leadingZerosBytes;
-    const codeBytes = @select(
-        i32,
-        codeBytesOverflow < @as(@Vector(4, i32), @splat(0)),
-        @as(@Vector(4, i32), @splat(0)),
-        codeBytesOverflow,
-    );
+
+    // Saturated subtract from 3 (saturated => overflow sticks to zero).
+    const codeBytes = @as(ValueVec, @splat(3)) -| leadingZerosBytes;
 
     // We now have a 2-bit code for each integer. Just need to get them in the right place.
     // Left-shift the bits in each the relative positions, then reduce.
-    const shifted = @as(@Vector(4, u32), @bitCast(codeBytes)) << @Vector(4, u8){ 0, 2, 4, 6 };
+    const shifted = codeBytes << .{ 0, 2, 4, 6 };
     const code = @as(u8, @truncate(@reduce(.Or, shifted)));
     control[0] = code;
 
-    // Grab the input bytes we need by computing (looking up) our shuffle mask.
-    const outputLength = lengths[code];
+    data[0..16].* = tblz.tableLookupBytesOr0(@bitCast(elems.*), encode_shuffles[code]);
 
-    const input = @as(@Vector(16, u8), @bitCast(elems.*));
-    data[0..16].* = tblz.tableLookupBytesOr0(input, encode_shuffles[code]);
-
-    return outputLength;
+    // Lookup the encoded length for this code
+    return lengths[code];
 }
 
 fn encode_scalar(elems: []const u32, control: []u8, data: []u8) usize {
@@ -171,13 +159,13 @@ fn encode_data(elem: u32, data: []u8) u8 {
         data[0] = elemBytes[0];
         return 0;
     } else if (elem < (1 << 16)) { // 2 bytes
-        @memcpy(data[0..2], elemBytes[0..2]);
+        data[0..2].* = elemBytes[0..2].*;
         return 1;
     } else if (elem < (1 << 24)) { // 3 bytes
-        @memcpy(data[0..3], elemBytes[0..3]);
+        data[0..3].* = elemBytes[0..3].*;
         return 2;
     } else { // 4 bytes
-        @memcpy(data[0..4], elemBytes[0..4]);
+        data[0..4].* = elemBytes[0..4].*;
         return 3;
     }
 }
@@ -211,7 +199,7 @@ pub fn decode(encoded: []const u8, elems: []u32) void {
 
 fn decode_quad(control: u8, data: [16]u8, elems: []u32) usize {
     const decoded = tblz.tableLookupBytesOr0(@bitCast(data), decode_shuffles[control]);
-    std.mem.sliceAsBytes(elems[0..4])[0..16].* = decoded;
+    elems[0..4].* = @bitCast(decoded);
     return lengths[control];
 }
 
@@ -223,13 +211,13 @@ fn decode_data(control: u8, data: []const u8, elem: *u32) u8 {
         elemBytes[0] = data[0];
         return 1;
     } else if (control == 1) {
-        @memcpy(elemBytes[0..2], data[0..2]);
+        elemBytes[0..2].* = data[0..2].*;
         return 2;
     } else if (control == 2) {
-        @memcpy(elemBytes[0..3], data[0..3]);
+        elemBytes[0..3].* = data[0..3].*;
         return 3;
     } else {
-        @memcpy(elemBytes, data[0..4]);
+        elemBytes[0..4].* = data[0..4].*;
         return 4;
     }
 }
@@ -282,7 +270,7 @@ fn bench(comptime name: []const u8, comptime Impl: anytype) !void {
     const testing = std.testing;
     const ally = std.testing.allocator;
 
-    const n = 1_000_000;
+    const n = 10_000_000;
     const max_int = 10_000;
     const loops = 20;
 
